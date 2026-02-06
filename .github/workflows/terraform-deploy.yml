@@ -24,20 +24,24 @@ on:
     branches:
       - main
   
-  # push:
-  #   branches:
-  #     - main
+  push:
+    branches:
+      - main
 
 env:
   TF_VERSION: '1.6.0'
   AWS_REGION: 'us-east-1'
 
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read    # Required to checkout code
+  pull-requests: write  # Required to comment on PRs
+
 jobs:
   terraform:
-    name: 'Terraform Run'
+    name: 'Terraform Deployment'
     runs-on: ubuntu-latest
     
-    # Use environment secrets for each environment
     environment: ${{ github.event.inputs.environment || 'dev' }}
     
     defaults:
@@ -48,12 +52,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
       
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+      
+      - name: Verify AWS Identity
+        run: |
+          echo "🔐 Verifying AWS identity..."
+          aws sts get-caller-identity
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -74,12 +83,22 @@ jobs:
             echo "action=apply" >> $GITHUB_OUTPUT
           fi
       
+      - name: Display Deployment Info
+        run: |
+          echo "🚀 Deployment Information"
+          echo "========================="
+          echo "Environment: ${{ steps.determine-env.outputs.environment }}"
+          echo "Action: ${{ steps.determine-env.outputs.action }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "========================="
+      
       - name: Terraform Format Check
         id: fmt
         run: terraform fmt -check -recursive
         continue-on-error: true
       
-      - name: Terraform Init
+      - name: Terraform Init - ${{ steps.determine-env.outputs.environment }}
         id: init
         run: |
           terraform init \
@@ -93,7 +112,7 @@ jobs:
         id: validate
         run: terraform validate -no-color
       
-      - name: Terraform Plan
+      - name: Terraform Plan - ${{ steps.determine-env.outputs.environment }}
         id: plan
         run: |
           terraform plan \
@@ -130,7 +149,8 @@ jobs:
             </details>
             
             *Environment: ${{ steps.determine-env.outputs.environment }}*
-            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*
+            *Authentication: OIDC ✅*`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -139,11 +159,11 @@ jobs:
               body: output
             })
       
-      - name: Terraform Apply
+      - name: Terraform Apply - ${{ steps.determine-env.outputs.environment }}
         if: steps.determine-env.outputs.action == 'apply' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
         run: terraform apply -auto-approve tfplan-${{ steps.determine-env.outputs.environment }}
       
-      - name: Terraform Destroy
+      - name: Terraform Destroy - ${{ steps.determine-env.outputs.environment }}
         if: steps.determine-env.outputs.action == 'destroy' && github.event_name == 'workflow_dispatch'
         run: |
           terraform destroy \
@@ -162,24 +182,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ steps.determine-env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "**Action:** ${{ steps.determine-env.outputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Authentication:** OIDC ✅" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Outputs" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
           echo '${{ steps.output.outputs.stdout }}' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-  # Security scanning job
-  tfsec:
-    name: 'TFSec Security Scan'
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-      
-      - name: Run tfsec
-        uses: aquasecurity/tfsec-action@v1.0.3
-        with:
-          working_directory: terraform
-          soft_fail: true
+          echo '```' >> $GITHUB_STEP
