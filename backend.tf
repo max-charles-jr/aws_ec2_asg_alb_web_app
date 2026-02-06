@@ -5,7 +5,7 @@
 terraform {
   backend "s3" {
     # These values will be provided via backend-config or environment variables
-    # bucket         = "myapp-terraform-state"
+    # bucket         = "mcharles-terraform-state"
     # key            = "autoscaling/${var.environment}/terraform.tfstate"
     # region         = "us-east-1"
     # encrypt        = true

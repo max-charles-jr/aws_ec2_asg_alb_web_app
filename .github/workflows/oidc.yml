@@ -107,8 +107,8 @@ jobs:
                   "s3:DeleteObject"
                 ],
                 "Resource": [
-                  "arn:aws:s3:::myapp-terraform-state-*",
-                  "arn:aws:s3:::myapp-terraform-state-*/*"
+                  "arn:aws:s3:::mcharles-terraform-state-*",
+                  "arn:aws:s3:::mcharles-terraform-state-*/*"
                 ]
               },
               {

@@ -41,16 +41,16 @@ create_backend() {
   ENV=$1
   
   # Create S3 bucket
-  aws s3 mb s3://myapp-terraform-state-${ENV} --region us-east-1
+  aws s3 mb s3://mcharles-terraform-state-${ENV} --region us-east-1
   
   # Enable versioning
   aws s3api put-bucket-versioning \
-    --bucket myapp-terraform-state-${ENV} \
+    --bucket mcharles-terraform-state-${ENV} \
     --versioning-configuration Status=Enabled
   
   # Enable encryption
   aws s3api put-bucket-encryption \
-    --bucket myapp-terraform-state-${ENV} \
+    --bucket mcharles-terraform-state-${ENV} \
     --server-side-encryption-configuration '{
       "Rules": [{
         "ApplyServerSideEncryptionByDefault": {
@@ -61,7 +61,7 @@ create_backend() {
   
   # Block public access
   aws s3api put-public-access-block \
-    --bucket myapp-terraform-state-${ENV} \
+    --bucket mcharles-terraform-state-${ENV} \
     --public-access-block-configuration \
     "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
   
@@ -98,7 +98,7 @@ cd terraform
 
 # Initialize with DEV backend
 terraform init \
-  -backend-config="bucket=myapp-terraform-state-dev" \
+  -backend-config="bucket=mcharles-terraform-state-dev" \
   -backend-config="key=autoscaling/dev/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="encrypt=true" \
@@ -120,7 +120,7 @@ cd terraform
 
 # Initialize with QA backend
 terraform init -reconfigure \
-  -backend-config="bucket=myapp-terraform-state-qa" \
+  -backend-config="bucket=mcharles-terraform-state-qa" \
   -backend-config="key=autoscaling/qa/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="encrypt=true" \
@@ -137,7 +137,7 @@ cd terraform
 
 # Initialize with PROD backend
 terraform init -reconfigure \
-  -backend-config="bucket=myapp-terraform-state-prod" \
+  -backend-config="bucket=mcharles-terraform-state-prod" \
   -backend-config="key=autoscaling/prod/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="encrypt=true" \
@@ -242,7 +242,7 @@ echo "=========================================="
 
 if [ "$ACTION" == "init" ]; then
   terraform init -reconfigure \
-    -backend-config="bucket=myapp-terraform-state-${ENVIRONMENT}" \
+    -backend-config="bucket=mcharles-terraform-state-${ENVIRONMENT}" \
     -backend-config="key=autoscaling/${ENVIRONMENT}/terraform.tfstate" \
     -backend-config="region=us-east-1" \
     -backend-config="encrypt=true" \
@@ -348,7 +348,7 @@ aws cloudwatch get-metric-statistics \
 # View lock info
 aws dynamodb get-item \
   --table-name terraform-state-lock-dev \
-  --key '{"LockID":{"S":"myapp-terraform-state-dev/autoscaling/dev/terraform.tfstate-md5"}}'
+  --key '{"LockID":{"S":"mcharles-terraform-state-dev/autoscaling/dev/terraform.tfstate-md5"}}'
 
 # Force unlock (use with caution!)
 terraform force-unlock <LOCK_ID>
