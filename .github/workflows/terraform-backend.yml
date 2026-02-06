@@ -267,7 +267,7 @@ jobs:
           echo "" >> summary.md
           
           for ENV in $ENVS; do
-            BUCKET_NAME="${PROJECT_NAME}-terraform-state-${ENV}"
+            BUCKET_NAME="mcharles-terraform-state-${ENV}"
             TABLE_NAME="terraform-state-lock-${ENV}"
             
             echo "**$ENV Environment:**" >> summary.md
