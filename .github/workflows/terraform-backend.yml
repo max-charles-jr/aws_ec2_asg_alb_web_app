@@ -24,6 +24,13 @@ on:
         type: boolean
         default: true
 
+permissions:
+  id-token: write
+  contents: read
+  #attestations: write
+  pull-requests: write
+  #issues: write        
+
 jobs:
   setup-backend:
     name: 'Setup Terraform Backend'
