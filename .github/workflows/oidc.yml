@@ -1,0 +1,353 @@
+name: Setup AWS OIDC for GitHub Actions
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_account_id:
+        description: 'AWS Account ID'
+        required: true
+        type: string
+      aws_region:
+        description: 'AWS Region'
+        required: true
+        type: string
+        default: 'us-east-1'
+      role_name:
+        description: 'IAM Role Name for GitHub Actions'
+        required: true
+        type: string
+        default: 'github-actions-terraform-role'
+      github_org:
+        description: 'GitHub Organization/Username'
+        required: true
+        type: string
+      github_repo:
+        description: 'GitHub Repository Name'
+        required: true
+        type: string
+
+env:
+  TF_VERSION: '1.6.0'
+
+jobs:
+  setup-oidc:
+    name: 'Setup AWS OIDC Provider and IAM Role'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Validate Inputs
+        run: |
+          echo "🔍 Validating inputs..."
+          echo "AWS Account ID: ${{ github.event.inputs.aws_account_id }}"
+          echo "AWS Region: ${{ github.event.inputs.aws_region }}"
+          echo "Role Name: ${{ github.event.inputs.role_name }}"
+          echo "GitHub Org: ${{ github.event.inputs.github_org }}"
+          echo "GitHub Repo: ${{ github.event.inputs.github_repo }}"
+      
+      - name: Configure AWS Credentials (Temporary)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.TEMP_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TEMP_AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.TEMP_AWS_SESSION_TOKEN }}
+          aws-region: ${{ github.event.inputs.aws_region }}
+      
+      - name: Check if OIDC Provider Exists
+        id: check-provider
+        run: |
+          set +e
+          aws iam get-open-id-connect-provider \
+            --open-id-connect-provider-arn "arn:aws:iam::${{ github.event.inputs.aws_account_id }}:oidc-provider/token.actions.githubusercontent.com" \
+            > /dev/null 2>&1
+          
+          if [ $? -eq 0 ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ OIDC Provider already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "❌ OIDC Provider does not exist"
+          fi
+          set -e
+      
+      - name: Create OIDC Provider
+        if: steps.check-provider.outputs.exists == 'false'
+        run: |
+          echo "Creating OIDC Provider..."
+          
+          # Get GitHub's OIDC thumbprint
+          THUMBPRINT=$(echo | openssl s_client -servername token.actions.githubusercontent.com -showcerts -connect token.actions.githubusercontent.com:443 2>/dev/null | openssl x509 -fingerprint -sha1 -noout | cut -d'=' -f2 | tr -d ':')
+          
+          aws iam create-open-id-connect-provider \
+            --url "https://token.actions.githubusercontent.com" \
+            --client-id-list "sts.amazonaws.com" \
+            --thumbprint-list "${THUMBPRINT}" \
+            --tags Key=ManagedBy,Value=GitHub-Actions Key=Purpose,Value=OIDC
+          
+          echo "✅ OIDC Provider created successfully"
+      
+      - name: Create IAM Policy for Terraform
+        id: create-policy
+        run: |
+          echo "Creating IAM Policy..."
+          
+          cat > terraform-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "TerraformStateManagement",
+                "Effect": "Allow",
+                "Action": [
+                  "s3:ListBucket",
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ],
+                "Resource": [
+                  "arn:aws:s3:::myapp-terraform-state-*",
+                  "arn:aws:s3:::myapp-terraform-state-*/*"
+                ]
+              },
+              {
+                "Sid": "DynamoDBStateLock",
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:DescribeTable",
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:DeleteItem"
+                ],
+                "Resource": "arn:aws:dynamodb:*:${{ github.event.inputs.aws_account_id }}:table/terraform-state-lock-*"
+              },
+              {
+                "Sid": "EC2Management",
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:Describe*",
+                  "ec2:Get*",
+                  "ec2:CreateTags",
+                  "ec2:DeleteTags",
+                  "ec2:RunInstances",
+                  "ec2:TerminateInstances",
+                  "ec2:StartInstances",
+                  "ec2:StopInstances",
+                  "ec2:CreateSecurityGroup",
+                  "ec2:DeleteSecurityGroup",
+                  "ec2:AuthorizeSecurityGroupIngress",
+                  "ec2:AuthorizeSecurityGroupEgress",
+                  "ec2:RevokeSecurityGroupIngress",
+                  "ec2:RevokeSecurityGroupEgress",
+                  "ec2:CreateLaunchTemplate",
+                  "ec2:CreateLaunchTemplateVersion",
+                  "ec2:DeleteLaunchTemplate",
+                  "ec2:ModifyLaunchTemplate"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Sid": "AutoScalingManagement",
+                "Effect": "Allow",
+                "Action": [
+                  "autoscaling:*"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Sid": "IAMManagement",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:GetRole",
+                  "iam:GetRolePolicy",
+                  "iam:GetInstanceProfile",
+                  "iam:GetPolicy",
+                  "iam:GetPolicyVersion",
+                  "iam:ListAttachedRolePolicies",
+                  "iam:ListRolePolicies",
+                  "iam:ListInstanceProfilesForRole",
+                  "iam:CreateRole",
+                  "iam:DeleteRole",
+                  "iam:PutRolePolicy",
+                  "iam:DeleteRolePolicy",
+                  "iam:AttachRolePolicy",
+                  "iam:DetachRolePolicy",
+                  "iam:CreateInstanceProfile",
+                  "iam:DeleteInstanceProfile",
+                  "iam:AddRoleToInstanceProfile",
+                  "iam:RemoveRoleFromInstanceProfile",
+                  "iam:PassRole",
+                  "iam:TagRole",
+                  "iam:TagInstanceProfile"
+                ],
+                "Resource": [
+                  "arn:aws:iam::${{ github.event.inputs.aws_account_id }}:role/myapp-*",
+                  "arn:aws:iam::${{ github.event.inputs.aws_account_id }}:instance-profile/myapp-*",
+                  "arn:aws:iam::${{ github.event.inputs.aws_account_id }}:policy/myapp-*"
+                ]
+              },
+              {
+                "Sid": "CloudWatchManagement",
+                "Effect": "Allow",
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:DeleteLogGroup",
+                  "logs:DescribeLogGroups",
+                  "logs:ListTagsLogGroup",
+                  "logs:TagLogGroup",
+                  "logs:UntagLogGroup",
+                  "logs:PutRetentionPolicy",
+                  "logs:DeleteRetentionPolicy",
+                  "cloudwatch:PutMetricAlarm",
+                  "cloudwatch:DeleteAlarms",
+                  "cloudwatch:DescribeAlarms",
+                  "cloudwatch:ListTagsForResource",
+                  "cloudwatch:TagResource",
+                  "cloudwatch:UntagResource"
+                ],
+                "Resource": "*"
+              }
+            ]
+          }
+          EOF
+          
+          # Check if policy exists
+          set +e
+          POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName=='GitHubActionsTerraformPolicy'].Arn" --output text)
+          set -e
+          
+          if [ -z "$POLICY_ARN" ]; then
+            POLICY_ARN=$(aws iam create-policy \
+              --policy-name GitHubActionsTerraformPolicy \
+              --policy-document file://terraform-policy.json \
+              --description "Policy for GitHub Actions to manage Terraform infrastructure" \
+              --tags Key=ManagedBy,Value=GitHub-Actions \
+              --query 'Policy.Arn' \
+              --output text)
+            echo "✅ Policy created: $POLICY_ARN"
+          else
+            # Update existing policy
+            VERSION=$(aws iam list-policy-versions \
+              --policy-arn "$POLICY_ARN" \
+              --query 'Versions[?IsDefaultVersion==`false`] | [0].VersionId' \
+              --output text)
+            
+            if [ "$VERSION" != "None" ]; then
+              aws iam delete-policy-version \
+                --policy-arn "$POLICY_ARN" \
+                --version-id "$VERSION" 2>/dev/null || true
+            fi
+            
+            aws iam create-policy-version \
+              --policy-arn "$POLICY_ARN" \
+              --policy-document file://terraform-policy.json \
+              --set-as-default
+            
+            echo "✅ Policy updated: $POLICY_ARN"
+          fi
+          
+          echo "policy_arn=$POLICY_ARN" >> $GITHUB_OUTPUT
+      
+      - name: Create IAM Role for GitHub Actions
+        id: create-role
+        run: |
+          echo "Creating IAM Role..."
+          
+          cat > trust-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::${{ github.event.inputs.aws_account_id }}:oidc-provider/token.actions.githubusercontent.com"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                  },
+                  "StringLike": {
+                    "token.actions.githubusercontent.com:sub": "repo:${{ github.event.inputs.github_org }}/${{ github.event.inputs.github_repo }}:*"
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+          
+          # Check if role exists
+          set +e
+          aws iam get-role --role-name ${{ github.event.inputs.role_name }} > /dev/null 2>&1
+          ROLE_EXISTS=$?
+          set -e
+          
+          if [ $ROLE_EXISTS -ne 0 ]; then
+            # Create role
+            ROLE_ARN=$(aws iam create-role \
+              --role-name ${{ github.event.inputs.role_name }} \
+              --assume-role-policy-document file://trust-policy.json \
+              --description "Role for GitHub Actions to run Terraform" \
+              --tags Key=ManagedBy,Value=GitHub-Actions Key=Purpose,Value=Terraform \
+              --query 'Role.Arn' \
+              --output text)
+            
+            echo "✅ Role created: $ROLE_ARN"
+          else
+            # Update trust policy
+            aws iam update-assume-role-policy \
+              --role-name ${{ github.event.inputs.role_name }} \
+              --policy-document file://trust-policy.json
+            
+            ROLE_ARN="arn:aws:iam::${{ github.event.inputs.aws_account_id }}:role/${{ github.event.inputs.role_name }}"
+            echo "✅ Role updated: $ROLE_ARN"
+          fi
+          
+          echo "role_arn=$ROLE_ARN" >> $GITHUB_OUTPUT
+      
+      - name: Attach Policy to Role
+        run: |
+          echo "Attaching policy to role..."
+          
+          aws iam attach-role-policy \
+            --role-name ${{ github.event.inputs.role_name }} \
+            --policy-arn ${{ steps.create-policy.outputs.policy_arn }}
+          
+          echo "✅ Policy attached to role"
+      
+      - name: Generate Setup Summary
+        run: |
+          echo "## 🎉 AWS OIDC Setup Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| AWS Account ID | \`${{ github.event.inputs.aws_account_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| AWS Region | \`${{ github.event.inputs.aws_region }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| IAM Role ARN | \`${{ steps.create-role.outputs.role_arn }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| IAM Policy ARN | \`${{ steps.create-policy.outputs.policy_arn }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| OIDC Provider | \`arn:aws:iam::${{ github.event.inputs.aws_account_id }}:oidc-provider/token.actions.githubusercontent.com\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Repo | \`${{ github.event.inputs.github_org }}/${{ github.event.inputs.github_repo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Remove temporary secrets** from GitHub:" >> $GITHUB_STEP_SUMMARY
+          echo "   - \`TEMP_AWS_ACCESS_KEY_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "   - \`TEMP_AWS_SECRET_ACCESS_KEY\`" >> $GITHUB_STEP_SUMMARY
+          echo "   - \`TEMP_AWS_SESSION_TOKEN\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Add the IAM Role ARN** as a GitHub secret/variable:" >> $GITHUB_STEP_SUMMARY
+          echo "   - Name: \`AWS_ROLE_ARN\`" >> $GITHUB_STEP_SUMMARY
+          echo "   - Value: \`${{ steps.create-role.outputs.role_arn }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Run the Terraform backend setup** workflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Test OIDC authentication** by running a Terraform workflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Trust Policy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The role trusts GitHub Actions from:" >> $GITHUB_STEP_SUMMARY
+          echo "- Repository: \`${{ github.event.inputs.github_org }}/${{ github.event.inputs.github_repo }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- All branches, tags, and environments" >> $GITHUB_STEP_SUMMARY
