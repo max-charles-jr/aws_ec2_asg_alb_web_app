@@ -49,7 +49,7 @@ jobs:
       - name: Terraform Init
         run: |
           terraform init \
-            -backend-config="bucket=myapp-terraform-state-${{ matrix.environment }}" \
+            -backend-config="bucket=mcharles-terraform-state-${{ matrix.environment }}" \
             -backend-config="key=autoscaling/${{ matrix.environment }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="encrypt=true" \
