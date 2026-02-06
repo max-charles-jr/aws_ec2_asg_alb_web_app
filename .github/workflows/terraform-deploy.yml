@@ -34,7 +34,7 @@ env:
 
 jobs:
   terraform:
-    name: 'Terraform ${{ github.event.inputs.action || 'plan' }} - ${{ github.event.inputs.environment || 'dev' }}'
+    name: 'Terraform Run'
     runs-on: ubuntu-latest
     
     # Use environment secrets for each environment
