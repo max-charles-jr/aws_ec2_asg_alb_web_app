@@ -88,7 +88,7 @@ jobs:
             echo "Setting up backend for environment: $ENV"
             echo "=================================================="
             
-            BUCKET_NAME="${PROJECT_NAME}-terraform-state-${ENV}"
+            BUCKET_NAME="mcharles-terraform-state-${ENV}"
             TABLE_NAME="terraform-state-lock-${ENV}"
             
             # Create S3 Bucket
