@@ -4,8 +4,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - 'terraform/**'
 
 env:
   TF_VERSION: '1.6.0'
@@ -25,7 +23,7 @@ jobs:
     
     defaults:
       run:
-        working-directory: ./terraform
+        working-directory: ./
     
     steps:
       - name: Checkout Code
